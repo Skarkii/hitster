@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Multiplayer Game</title>
+        <style>
+            body {
+                margin: 0;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                background-color: #f0f0f0;
+                font-family: Arial, sans-serif;
+            }
+            #lobby,
+            #room {
+                text-align: center;
+            }
+            input,
+            button {
+                padding: 8px;
+                margin: 5px;
+                font-size: 16px;
+            }
+            #joinForm {
+                margin-top: 10px;
+            }
+            #roomCodeDisplay {
+                font-weight: bold;
+                color: #333;
+                margin: 10px 0;
+            }
+            #error {
+                color: red;
+                margin-top: 10px;
+            }
+            #playerList {
+                list-style: none;
+                padding: 0;
+                margin: 20px 0;
+            }
+            #playerList li {
+                padding: 5px;
+                background-color: #fff;
+                margin: 5px 0;
+                border-radius: 5px;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            }
+        </style>
+    </head>
+    <body>
+        <div id="lobby">
+            <h1>Multiplayer Game</h1>
+            <div>
+                <input
+                    type="text"
+                    id="displayName"
+                    placeholder="Your Name"
+                    maxlength="20"
+                />
+            </div>
+            <div>
+                <button onclick="createRoom()">Create Room</button>
+                <button onclick="showJoinForm()">Join Room</button>
+            </div>
+            <div id="joinForm" style="display: none">
+                <input
+                    type="text"
+                    id="roomCode"
+                    placeholder="Room Code"
+                    maxlength="4"
+                />
+                <button onclick="joinRoom()">Join</button>
+            </div>
+            <div id="error"></div>
+        </div>
+        <div id="room" style="display: none">
+            <h1>Room</h1>
+            <div id="roomCodeDisplay"></div>
+            <h2>Players</h2>
+            <ul id="playerList"></ul>
+            <button onclick="leaveRoom()">Leave Room</button>
+            <div id="roomError"></div>
+        </div>
+        <script src="scripts/game.js"></script>
+    </body>
+</html>
