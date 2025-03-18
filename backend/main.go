@@ -7,54 +7,77 @@ import (
 	"math/rand"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-// Player represents a player in the game
-type Player struct {
-	SessionID    string          `json:"-"`            // Unique session ID (not sent to client)
-	SessionToken string          `json:"sessionToken"` // Token for reconnection
-	DisplayName  string          `json:"displayName"`  // Player's chosen name
-	Conn         *websocket.Conn `json:"-"`            // WebSocket connection
-	RoomID       string          `json:"-"`            // Room the player is in
-	LastSeen     time.Time       `json:"-"`            // Last time the player was active
+// Client -> Server messages
+type ClientMessage struct {
+	Type         string `json:"type"`
+	SessionToken string `json:"sessionToken"`
+	RoomCode     string `json:"roomCode"`
+	DisplayName  string `json:"displayName"`
 }
 
-// Room represents a game room
+// Server -> Client messages
+type ServerMessage struct {
+	Type         string   `json:"type"`
+	SessionToken string   `json:"sessionToken"`
+	RoomCode     string   `json:"roomCode"`
+	Players      []string `json:"players"`
+}
+
+// Player struct
+type Player struct {
+	SessionToken string
+	DisplayName  string
+	RoomID       string
+	Conn         *websocket.Conn
+}
+
+// Room struct
 type Room struct {
-	ID      string             `json:"id"`
-	Host    *Player            // The first person to join
-	Players map[string]*Player // Keyed by sessionID
+	ID      string
+	Host    *Player
+	Players map[string]*Player
 	Lock    sync.Mutex
 }
 
-// GameState holds all rooms and sessions
+// GameState holds all players(sessions) and rooms
 type GameState struct {
+	Sessions map[string]*Player
 	Rooms    map[string]*Room
-	Sessions map[string]*Player // Keyed by sessionToken
 	Lock     sync.Mutex
 }
 
 var game = GameState{
-	Rooms:    make(map[string]*Room),
 	Sessions: make(map[string]*Player),
+	Rooms:    make(map[string]*Room),
 }
 
-// WebSocket upgrader
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins (restrict in production)
-	},
+func printAllPlayers() {
+	game.Lock.Lock()
+	defer game.Lock.Unlock()
+	fmt.Println("All players:")
+	for key := range game.Sessions {
+		fmt.Println(key)
+	}
+	fmt.Println("END All players")
+}
+
+func printAllPlayersInRoom(room *Room) {
+	room.Lock.Lock()
+	defer room.Lock.Unlock()
+	fmt.Printf("All players in room %s:\n", room.ID)
+	for key := range room.Players {
+		fmt.Println(room.Players[key])
+	}
+	fmt.Printf("END All players in room %s\n", room.ID)
 }
 
 // Generate a random room code
 func generateRoomCode() string {
 	const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	rand.Seed(time.Now().UnixNano())
 	code := make([]byte, 4)
 	for i := range code {
 		code[i] = letters[rand.Intn(len(letters))]
@@ -62,103 +85,137 @@ func generateRoomCode() string {
 	return string(code)
 }
 
-// Clean up old sessions periodically
-func cleanupOldSessions() {
-	for {
-		time.Sleep(1 * time.Minute)
-		log.Printf("Performing cleanup")
-		game.Lock.Lock()
-		for token, player := range game.Sessions {
-			if time.Since(player.LastSeen) > 5*time.Minute { // 5-minute timeout
-				if player.RoomID != "" {
-					if room, exists := game.Rooms[player.RoomID]; exists {
-						room.Lock.Lock()
-						delete(room.Players, player.SessionID)
-						room.Lock.Unlock()
-						broadcastRoomState(room)
-					}
-				}
-				delete(game.Sessions, token)
-			}
-		}
-		game.Lock.Unlock()
+// Generates a new player
+func generatePlayer() *Player {
+	// Generate a unique token between 100000000000-999999999999
+	game.Lock.Lock()
+	sessionToken := fmt.Sprintf("%d", 100000000000+rand.Intn(899999999999))
+	for _, exists := game.Sessions[sessionToken]; exists; {
+		sessionToken = fmt.Sprintf("%d", 100000000000+rand.Intn(899999999999))
 	}
+
+	// Create a player with an unique session Token
+	player := &Player{
+		SessionToken: sessionToken,
+	}
+
+	game.Sessions[player.SessionToken] = player
+	game.Lock.Unlock()
+
+	return player
 }
 
-// Message types for client-server communication
-type ClientMessage struct {
-	Type         string `json:"type"`
-	RoomCode     string `json:"roomCode"`
-	DisplayName  string `json:"displayName"`
-	SessionToken string `json:"sessionToken"`
+// Returns the player from the token if it exists
+func getPlayer(token string) *Player {
+	game.Lock.Lock()
+	defer game.Lock.Unlock()
+	if existingPlayer, exists := game.Sessions[token]; exists {
+		return existingPlayer
+	}
+	return nil
 }
 
-type ServerMessage struct {
-	Type     string   `json:"type"`
-	RoomCode string   `json:"roomCode"`
-	Players  []string `json:"players"`
-	Error    string   `json:"error"`
+func createRoom(host string, displayName string) *Room {
+	hostUser := getPlayer(host)
+	if hostUser == nil {
+		fmt.Printf("Nil user %s tried to create a room!", host)
+		return nil
+	}
+	hostUser.DisplayName = displayName
+	game.Lock.Lock()
+	defer game.Lock.Unlock()
+	// Generate a room code until given a new room
+	roomCode := generateRoomCode()
+	for _, exists := game.Rooms[roomCode]; exists; {
+		roomCode = generateRoomCode()
+	}
+
+	room := &Room{
+		ID:      roomCode,
+		Host:    hostUser,
+		Players: make(map[string]*Player),
+	}
+
+	game.Rooms[room.ID] = room
+	fmt.Printf("Player %s created room %s!\n", hostUser.SessionToken, roomCode)
+
+	room.Players[hostUser.SessionToken] = hostUser
+
+	return room
+}
+
+func getRoom(code string, playerToken string, displayName string) *Room {
+	player := getPlayer(playerToken)
+	if player == nil {
+		fmt.Printf("Nil user %s tried to get room!!", playerToken)
+		return nil
+	}
+	player.DisplayName = displayName
+	game.Lock.Lock()
+	defer game.Lock.Unlock()
+
+	if existingRoom, exists := game.Rooms[code]; exists {
+		existingRoom.Lock.Lock()
+
+		existingRoom.Players[player.SessionToken] = player
+
+		existingRoom.Lock.Unlock()
+
+		return existingRoom
+	}
+	return nil
 }
 
 func getPlayerNames(room *Room) []string {
 	room.Lock.Lock()
 	defer room.Lock.Unlock()
-	var names []string
-	for _, player := range room.Players {
-		names = append(names, player.DisplayName)
+	var players []string
+	for key := range room.Players {
+		players = append(players, room.Players[key].DisplayName)
 	}
-	return names
+	return players
 }
 
-func generate_player(conn *websocket.Conn) *Player {
-	sessionID := fmt.Sprintf("session-%d", rand.Intn(1000000))
-	sessionToken := fmt.Sprintf("token-%d", rand.Intn(1000000))
-	// Create a player with an unique session ID & Token
-	player := &Player{
-		SessionID:    sessionID,
-		SessionToken: sessionToken,
-		Conn:         conn,
-		LastSeen:     time.Now(),
+// Broadcast the current room state to all players in the room
+func broadcastRoomState(room *Room) {
+	names := getPlayerNames(room)
+	room.Lock.Lock()
+	defer room.Lock.Unlock()
+
+	response := ServerMessage{
+		Type:     "roomState",
+		RoomCode: room.ID,
+		Players:  names,
 	}
 
-	game.Lock.Lock()
-	game.Sessions[player.SessionToken] = player
-	fmt.Printf("Created session {%s}", sessionToken)
-	game.Lock.Unlock()
-
-	// Send room code and session token to the client
-	response := ClientMessage{
-		Type:         "newSession",
-		SessionToken: sessionToken,
+	for _, player := range room.Players {
+		if player.Conn != nil {
+			player.Conn.WriteJSON(response)
+		}
 	}
-	conn.WriteJSON(response)
-	return player
 }
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Failed to upgrade connection: %v", err)
 		return
 	}
 
-	var player *Player
-	var room *Room
+	defer conn.Close()
+	/*defer func() {
+	conn.Close()
+	}()*/
 
-	defer func() {
-		if player != nil && room != nil {
-			player.Conn = nil
-			player.LastSeen = time.Now()
-			broadcastRoomState(room)
-		}
-		conn.Close()
-	}()
+	fmt.Printf("New connection from: %s\n", conn.LocalAddr())
 
-	// Listen for messages from the client
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
+			// Ignore the error if it's a normal closure or going away
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				return
+			}
 			log.Printf("Error reading message: %v", err)
 			break
 		}
@@ -170,132 +227,88 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch clientMsg.Type {
-		// Upon socket creation an announce is sent to either reconnect or generate new session
 		case "announce":
-			// Handle sessions by reconnecting or creating a new Session ID
-			fmt.Printf("SENT %s\n", clientMsg.SessionToken)
-			if clientMsg.SessionToken != "" {
-				game.Lock.Lock()
-				if existingPlayer, exists := game.Sessions[clientMsg.SessionToken]; exists {
-					fmt.Printf("Existing session found, reconnecting!")
-					existingPlayer.Conn = conn
-					existingPlayer.LastSeen = time.Now()
-					player = existingPlayer
-					if room, exists = game.Rooms[player.RoomID]; exists {
-						room.Lock.Lock()
-						room.Players[player.SessionID] = player
-						room.Lock.Unlock()
-						conn.WriteJSON(ClientMessage{
-							Type:         "reconnected",
-							RoomCode:     room.ID,
-							SessionToken: player.SessionToken,
-						})
-						broadcastRoomState(room)
-						game.Lock.Unlock()
-						continue
-					}
-				} else {
-					game.Lock.Unlock()
-					player = generate_player(conn)
-				}
-			} else {
-				player = generate_player(conn)
+			var player *Player
+			player = getPlayer(clientMsg.SessionToken)
+
+			if player == nil {
+				player = generatePlayer()
 			}
+
+			player.Conn = conn
+
+			conn.WriteJSON(ServerMessage{
+				Type:         "session",
+				SessionToken: player.SessionToken,
+			})
+
+			room := getRoom(player.RoomID, player.SessionToken, player.DisplayName)
+			if room != nil {
+				conn.WriteJSON(ServerMessage{
+					Type:     "joinedRoom",
+					RoomCode: room.ID,
+					Players:  getPlayerNames(room),
+				})
+				broadcastRoomState(room)
+			}
+
 		case "createRoom":
-			// Generate a room with a unique non used ID
-			game.Lock.Lock()
-			roomCode := generateRoomCode()
-			for _, exists := game.Rooms[roomCode]; exists; {
-				roomCode = generateRoomCode()
+			room := createRoom(clientMsg.SessionToken, clientMsg.DisplayName)
+			conn.WriteJSON(ServerMessage{
+				Type:     "joinedRoom",
+				RoomCode: room.ID,
+				Players:  getPlayerNames(room),
+			})
+			player := getPlayer(clientMsg.SessionToken)
+			if player == nil {
+				fmt.Printf("nil player %s tried to join room.\n", clientMsg.SessionToken)
 			}
-			room = &Room{
-				ID:      roomCode,
-				Players: make(map[string]*Player),
-				Host:    player,
-			}
-
-			game.Rooms[roomCode] = room
-			game.Lock.Unlock()
-
 			player.RoomID = room.ID
-			player.DisplayName = clientMsg.DisplayName
-
-			room.Lock.Lock()
-			room.Players[player.SessionID] = player
-			room.Lock.Unlock()
-
-			// Send current room state and session token to the new player
-			response := ClientMessage{
-				Type:        "roomCreated",
-				RoomCode:    room.ID,
-				DisplayName: clientMsg.DisplayName,
-			}
-			conn.WriteJSON(response)
-			broadcastRoomState(room)
 
 		case "joinRoom":
-			if player.RoomID != "" {
+			room := getRoom(clientMsg.RoomCode, clientMsg.SessionToken, clientMsg.DisplayName)
+			if room == nil {
 				conn.WriteJSON(ServerMessage{
-					Type:  "error",
-					Error: "Already in a room",
+					Type: "failedJoin",
 				})
 				continue
 			}
-
-			game.Lock.Lock()
-			room, exists := game.Rooms[clientMsg.RoomCode]
-			game.Lock.Unlock()
-
-			if !exists {
-				conn.WriteJSON(ServerMessage{
-					Type:  "error",
-					Error: "Room not found",
-				})
-				continue
+			conn.WriteJSON(ServerMessage{
+				Type:     "joinedRoom",
+				RoomCode: room.ID,
+				Players:  getPlayerNames(room),
+			})
+			player := getPlayer(clientMsg.SessionToken)
+			if player == nil {
+				fmt.Printf("nil player %s tried to join room.\n", clientMsg.SessionToken)
+				return
 			}
+			player.RoomID = room.ID
 
-			player.DisplayName = clientMsg.DisplayName
-			player.RoomID = clientMsg.RoomCode
-
-			room.Lock.Lock()
-			room.Players[player.SessionID] = player
-			room.Lock.Unlock()
-
-			// Send current room state and session token to the new player
-			response := ClientMessage{
-				Type:        "roomJoined",
-				RoomCode:    room.ID,
-				DisplayName: clientMsg.DisplayName,
-			}
-
-			conn.WriteJSON(response)
 			broadcastRoomState(room)
 
 		case "leaveRoom":
-			if player.RoomID == "" {
-				// Player isn't in a room, just confirm they've left
-				conn.WriteJSON(ServerMessage{
-					Type: "leftRoom",
-				})
-				fmt.Printf("Finished here")
+			player := getPlayer(clientMsg.SessionToken)
+			if player == nil {
+				fmt.Printf("Nil player %s tried to leave room!", clientMsg.SessionToken)
+				return
+			}
+			room := getRoom(player.RoomID, player.SessionToken, player.DisplayName)
+			if room == nil {
+				fmt.Printf("Player %s tried to leave non existing room!\n", clientMsg.SessionToken)
 				continue
 			}
-			// Fetch the room using player.RoomID
-			game.Lock.Lock()
-			room, exists := game.Rooms[player.RoomID]
-			if exists {
-				room.Lock.Lock()
-				delete(room.Players, player.SessionID)
-				room.Lock.Unlock()
-			}
-			game.Lock.Unlock()
 
 			player.RoomID = ""
+
+			room.Lock.Lock()
+			delete(room.Players, player.SessionToken)
+			if len(room.Players) <= 0 {
+				// delete room later on
+			}
+			room.Lock.Unlock()
+
 			broadcastRoomState(room)
-			// Notify the player they've left
-			conn.WriteJSON(ServerMessage{
-				Type: "leftRoom",
-			})
 
 		default:
 			fmt.Printf("Unhandled!: %s\n", clientMsg.Type)
@@ -303,35 +316,16 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Broadcast the current room state to all players in the room
-func broadcastRoomState(room *Room) {
-	names := getPlayerNames(room)
-	room.Lock.Lock()
-	defer room.Lock.Unlock()
-
-	if len(room.Players) > 0 {
-		fmt.Printf("Players: %v\n", room.Players)
-	} else {
-		fmt.Printf("No players!\n")
-	}
-
-	response := ServerMessage{
-		Type:     "roomState",
-		RoomCode: room.ID,
-		Players:  names,
-	}
-	for _, player := range room.Players {
-		if player.Conn != nil {
-			player.Conn.WriteJSON(response)
-		}
-	}
+// WebSocket upgrader
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return true // Allow all origins (restrict in production)
+	},
 }
 
 func main() {
-	// Start cleanup routine
-	go cleanupOldSessions()
-
-	// Serve WebSocket endpoint
 	http.HandleFunc("/ws", handleWebSocket)
 
 	fmt.Println("Server listening on :8080")

@@ -1,90 +1,89 @@
-const lobby = document.getElementById("lobby");
-const roomDiv = document.getElementById("room");
-const displayNameInput = document.getElementById("displayName");
-const roomCodeInput = document.getElementById("roomCode");
-const joinForm = document.getElementById("joinForm");
-const roomCodeDisplay = document.getElementById("roomCodeDisplay");
-const errorDiv = document.getElementById("error");
-const roomErrorDiv = document.getElementById("roomError");
-const playerList = document.getElementById("playerList");
-
-let ws = null;
-let players = {};
 let sessionToken = localStorage.getItem("sessionToken") || "";
+const roomCodeDisplay = document.getElementById("roomCodeDisplay");
+const roomCodeInput = document.getElementById("roomCode");
+const displayNameInput = document.getElementById("displayName");
+const lobbyDiv = document.getElementById("lobby");
+const homepageDiv = document.getElementById("homepage");
+let ws = null;
 let currentRoomCode = null;
+let players = {};
 
-// Connect to the WebSocket server
-function connect() {
-  ws = new WebSocket("ws://localhost:8080/ws");
+const popupTypes = Object.freeze({
+  INFO: 0,
+  WARNING: 1,
+  ERROR: 2,
+});
 
-  ws.onopen = () => {
-    console.log("Connected to WebSocket server");
-    ws.send(
-      JSON.stringify({
-        type: "announce",
-        sessionToken: sessionToken,
-      }),
-    );
-  };
+let currentPopupType = popupTypes.INFO;
 
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    console.log(msg);
-    switch (msg.type) {
-      case "newSession":
-        console.log(msg.sessionToken);
-        sessionToken = msg.sessionToken;
-        localStorage.setItem("sessionToken", sessionToken);
-        break;
-      case "roomCreated":
-      case "roomJoined":
-      case "reconnected":
-        sessionToken = msg.sessionToken;
-        currentRoomCode = msg.roomCode;
-        players = msg.players;
-        lobby.style.display = "none";
-        roomDiv.style.display = "block";
-        roomCodeDisplay.textContent = `Room Code: ${currentRoomCode}`;
-        updatePlayerList();
-        break;
-      case "roomState":
-        players = msg.players;
-        updatePlayerList();
-        break;
-      case "leftRoom":
-        resetToLobby();
-        break;
-      case "error":
-        if (roomDiv.style.display === "block") {
-          roomErrorDiv.textContent = msg.error;
-        } else {
-          errorDiv.textContent = msg.error;
-        }
-      default:
-        console.log("UNHANDLED MSG:" + msg.type);
-        break;
+function showPopup(message, type = popupTypes.INFO) {
+  if (type < currentPopupType) {
+    console.log("IGNORED POPUP CURRENT: ", currentPopupType);
+    return;
+    // Ignore if worse message is already pending
+  }
+  console.log("SHOWING POPUP: ", type, "Current: ", currentPopupType);
+  currentPopupType = type;
+  const popup = document.getElementById("popup");
+  popup.textContent = message;
+  popup.className = "popup"; // Reset classes
+  if (type === popupTypes.WARNING) popup.classList.add("warning");
+  if (type === popupTypes.ERROR) popup.classList.add("error");
+  popup.style.display = "block";
+
+  // If it is info, hide after set time
+  if (type === popupTypes.INFO) {
+    setTimeout(() => {
+      hidePopup();
+    }, 3000);
+  }
+}
+
+function hidePopup(fromOpen = false) {
+  if (fromOpen === true) {
+    if (currentPopupType <= popupTypes.INFO) {
+      console.log("Ignored hide because of startup");
+      return;
     }
-  };
+  }
+  console.log("HIDES NOW!");
+  const popup = document.getElementById("popup");
+  popup.classList.remove("error");
+  popup.classList.remove("warning");
+  popup.style.display = "none";
+  currentPopupType = popupTypes.INFO;
+}
 
-  ws.onclose = () => {
-    console.log("Disconnected from WebSocket server");
-    if (roomDiv.style.display === "block") {
-      roomErrorDiv.textContent =
-        "Disconnected from server. Attempting to reconnect...";
-      setTimeout(connect, 3000); // Attempt to reconnect after 3 seconds
-    } else {
-      errorDiv.textContent = "Disconnected from server";
-    }
-  };
+function createRoom() {
+  const displayName = displayNameInput.value.trim();
+  if (!displayName) {
+    showPopup("Please enter a display name!");
+    return;
+  }
+  ws.send(
+    JSON.stringify({
+      type: "createRoom",
+      displayName: displayName,
+      sessionToken: sessionToken,
+    }),
+  );
+}
 
-  ws.onerror = (error) => {
-    console.error("WebSocket error:", error);
-    if (roomDiv.style.display === "block") {
-      roomErrorDiv.textContent = "Connection error";
-    } else {
-      errorDiv.textContent = "Connection error";
-    }
-  };
+function joinRoom() {
+  const displayName = displayNameInput.value.trim();
+  const code = roomCodeInput.value.trim().toUpperCase();
+  if (!displayName) {
+    showPopup("Please enter a display name!");
+    return;
+  }
+  ws.send(
+    JSON.stringify({
+      type: "joinRoom",
+      displayName: displayName,
+      sessionToken: sessionToken,
+      roomCode: code,
+    }),
+  );
 }
 
 // Update the player list UI
@@ -97,78 +96,92 @@ function updatePlayerList() {
   }
 }
 
-// Reset to lobby screen
-function resetToLobby() {
-  lobby.style.display = "block";
-  roomDiv.style.display = "none";
-  roomCodeDisplay.textContent = "";
-  roomErrorDiv.textContent = "";
-  currentRoomCode = null;
-  players = {};
-  displayNameInput.value = "";
-  roomCodeInput.value = "";
-  joinForm.style.display = "none";
+function joinedRoom() {
+  roomCodeDisplay.textContent = `Room Code: ${currentRoomCode}`;
+  updatePlayerList();
+
+  homepageDiv.style.display = "None";
+  lobbyDiv.style.display = "Block";
 }
 
-// Create a new room
-function createRoom() {
-  console.log("CREATE ROOM!");
-  const displayName = displayNameInput.value.trim();
-  if (!displayName) {
-    errorDiv.textContent = "Please enter a display name";
-    return;
-  }
-  errorDiv.textContent = "";
-  ws.send(
-    JSON.stringify({
-      type: "createRoom",
-      displayName: displayName,
-    }),
-  );
-}
-
-// Show the join room form
-function showJoinForm() {
-  joinForm.style.display = "block";
-}
-
-// Join an existing room
-function joinRoom() {
-  const displayName = displayNameInput.value.trim();
-  const code = roomCodeInput.value.trim().toUpperCase();
-  if (!displayName) {
-    errorDiv.textContent = "Please enter a display name";
-    return;
-  }
-  if (!code) {
-    errorDiv.textContent = "Please enter a room code";
-    return;
-  }
-  errorDiv.textContent = "";
-  ws.send(
-    JSON.stringify({
-      type: "joinRoom",
-      roomCode: code,
-      displayName: displayName,
-    }),
-  );
-}
-
-// Leave the room
 function leaveRoom() {
-  const code = roomCodeInput.value.trim().toUpperCase();
+  homepageDiv.style.display = "Block";
+  lobbyDiv.style.display = "None";
+  currentRoomCode = null;
   ws.send(
     JSON.stringify({
       type: "leaveRoom",
+      sessionToken: sessionToken,
     }),
   );
-
-  // Should I do this?
-  //if (ws && ws.readyState === WebSocket.OPEN) {
-  //ws.close();
-  //}
-  //connect();
 }
 
-// Start the game
+function connect() {
+  ws = new WebSocket("ws://localhost:8080/ws");
+  console.log("Connecting to websocket!");
+  const timeout = setTimeout(() => {
+    console.error("WebSocket connection timeout!");
+    ws.close();
+  }, 2500); // 5 seconds
+
+  ws.onopen = () => {
+    clearTimeout(timeout);
+    console.log("Connected to server");
+    ws.send(
+      JSON.stringify({
+        type: "announce",
+        sessionToken: sessionToken,
+      }),
+    );
+    hidePopup(true);
+  };
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    console.log(msg);
+    switch (msg.type) {
+      case "session":
+        sessionToken = msg.sessionToken;
+        localStorage.setItem("sessionToken", sessionToken);
+        console.log("Set SessionToken to: %s", sessionToken);
+        break;
+      case "failedJoin":
+        showPopup("Room code does not exist!");
+        break;
+      case "joinedRoom":
+        console.log("Joined room!");
+        currentRoomCode = msg.roomCode;
+        players = msg.players;
+        joinedRoom();
+        break;
+      case "roomState":
+        players = msg.players;
+        updatePlayerList();
+        break;
+      default:
+        console.log("UNHANDLED MSG:" + msg.type);
+        break;
+    }
+  };
+
+  ws.onclose = (event) => {
+    // Ignore if the closure was because of a refresh
+    if (event.code === 1001 && event.wasClean) {
+      console.log("Close was clean, therefore ignored");
+      return;
+    }
+    console.log("WebSocket disconnected.. reconnecting!!: ", event);
+    showPopup("WebSocket disconnected.. reconnecting!!", popupTypes.WARNING);
+    setTimeout(connect, 1500);
+  };
+
+  ws.onerror = (error) => {
+    // I do not think this should be printed.
+    //showPopup("WebSocket error:", popupTypes.ERROR);
+    console.log("WEBSOCKET ERROR");
+    console.error("WebSocket error:", error);
+    ws.close();
+  };
+}
+
 connect();
