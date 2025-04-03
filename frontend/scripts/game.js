@@ -4,7 +4,9 @@ const roomCodeInput = document.getElementById("roomCode");
 const displayNameInput = document.getElementById("displayName");
 const lobbyDiv = document.getElementById("lobby");
 const homepageDiv = document.getElementById("homepage");
+const startButton = document.getElementById("startButton");
 let ws = null;
+let isOwner = false;
 let currentRoomCode = null;
 let players = {};
 
@@ -94,6 +96,9 @@ function updatePlayerList() {
     li.textContent = players[i] + "";
     playerList.appendChild(li);
   }
+  if (isOwner) {
+    startButton.style.display = "Block";
+  }
 }
 
 function joinedRoom() {
@@ -152,10 +157,12 @@ function connect() {
         console.log("Joined room!");
         currentRoomCode = msg.roomCode;
         players = msg.players;
+        isOwner = msg.roomOwner;
         joinedRoom();
         break;
       case "roomState":
         players = msg.players;
+        isOwner = msg.roomOwner;
         updatePlayerList();
         break;
       default:

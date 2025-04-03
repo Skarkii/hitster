@@ -24,6 +24,7 @@ type ServerMessage struct {
 	Type         string   `json:"type"`
 	SessionToken string   `json:"sessionToken"`
 	RoomCode     string   `json:"roomCode"`
+	RoomOwner    bool     `json:"roomOwner"`
 	Players      []string `json:"players"`
 }
 
@@ -180,19 +181,36 @@ func getPlayerNames(room *Room) []string {
 func broadcastRoomState(room *Room) {
 	names := getPlayerNames(room)
 	room.Lock.Lock()
-	defer room.Lock.Unlock()
+	players := room.Players
+	room.Lock.Unlock()
 
-	response := ServerMessage{
-		Type:     "roomState",
-		RoomCode: room.ID,
-		Players:  names,
-	}
-
-	for _, player := range room.Players {
+	for _, player := range players {
+		response := ServerMessage{
+			Type:      "roomState",
+			RoomCode:  room.ID,
+			RoomOwner: isRoomOwner(room, player),
+			Players:   names,
+		}
 		if player.Conn != nil {
 			player.Conn.WriteJSON(response)
 		}
 	}
+}
+
+func isRoomOwner(room *Room, player *Player) bool {
+	if room == nil {
+		return false
+	}
+	room.Lock.Lock()
+	game.Lock.Lock()
+
+	defer room.Lock.Unlock()
+	defer game.Lock.Unlock()
+
+	if player == room.Host {
+		return true
+	}
+	return false
 }
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -243,25 +261,29 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			})
 
 			room := getRoom(player.RoomID, player.SessionToken, player.DisplayName)
+
 			if room != nil {
 				conn.WriteJSON(ServerMessage{
-					Type:     "joinedRoom",
-					RoomCode: room.ID,
-					Players:  getPlayerNames(room),
+					Type:      "joinedRoom",
+					RoomCode:  room.ID,
+					RoomOwner: isRoomOwner(room, player),
+					Players:   getPlayerNames(room),
 				})
 				broadcastRoomState(room)
 			}
 
 		case "createRoom":
 			room := createRoom(clientMsg.SessionToken, clientMsg.DisplayName)
-			conn.WriteJSON(ServerMessage{
-				Type:     "joinedRoom",
-				RoomCode: room.ID,
-				Players:  getPlayerNames(room),
-			})
 			player := getPlayer(clientMsg.SessionToken)
+
+			conn.WriteJSON(ServerMessage{
+				Type:      "joinedRoom",
+				RoomCode:  room.ID,
+				RoomOwner: true,
+				Players:   getPlayerNames(room),
+			})
 			if player == nil {
-				fmt.Printf("nil player %s tried to join room.\n", clientMsg.SessionToken)
+				fmt.Printf("nil player %s tried to create room.\n", clientMsg.SessionToken)
 			}
 			player.RoomID = room.ID
 
@@ -274,9 +296,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			conn.WriteJSON(ServerMessage{
-				Type:     "joinedRoom",
-				RoomCode: room.ID,
-				Players:  getPlayerNames(room),
+				Type:      "joinedRoom",
+				RoomCode:  room.ID,
+				RoomOwner: false,
+				Players:   getPlayerNames(room),
 			})
 			player := getPlayer(clientMsg.SessionToken)
 			if player == nil {
@@ -304,9 +327,21 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			room.Lock.Lock()
 			delete(room.Players, player.SessionToken)
 			if len(room.Players) <= 0 {
-				// delete room later on
+				room.Lock.Unlock()
+				game.Lock.Lock()
+				delete(game.Rooms, room.ID)
+				game.Lock.Unlock()
 			}
-			room.Lock.Unlock()
+
+			if isRoomOwner(room, player) {
+				room.Lock.Lock()
+				for _, player := range room.Players {
+					room.Host = player
+					break
+				}
+				room.Lock.Unlock()
+
+			}
 
 			broadcastRoomState(room)
 
