@@ -19,11 +19,12 @@ const popupTypes = Object.freeze({
 let currentPopupType = popupTypes.INFO;
 
 function showPopup(message, type = popupTypes.INFO) {
+  // Ignore if worse message is already pending
   if (type < currentPopupType) {
     console.log("IGNORED POPUP CURRENT: ", currentPopupType);
     return;
-    // Ignore if worse message is already pending
   }
+
   console.log("SHOWING POPUP: ", type, "Current: ", currentPopupType);
   currentPopupType = type;
   const popup = document.getElementById("popup");
@@ -98,6 +99,8 @@ function updatePlayerList() {
   }
   if (isOwner) {
     startButton.style.display = "Block";
+  } else {
+    startButton.style.display = "none";
   }
 }
 

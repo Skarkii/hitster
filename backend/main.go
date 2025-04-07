@@ -327,11 +327,14 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			room.Lock.Lock()
 			delete(room.Players, player.SessionToken)
 			if len(room.Players) <= 0 {
+				fmt.Printf("Room empty, removing")
 				room.Lock.Unlock()
 				game.Lock.Lock()
 				delete(game.Rooms, room.ID)
 				game.Lock.Unlock()
+				continue
 			}
+			room.Lock.Unlock()
 
 			if isRoomOwner(room, player) {
 				room.Lock.Lock()
@@ -340,7 +343,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 				room.Lock.Unlock()
-
 			}
 
 			broadcastRoomState(room)
