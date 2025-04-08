@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -27,6 +28,7 @@ type ServerMessage struct {
 	RoomOwner    bool     `json:"roomOwner"`
 	Players      []string `json:"players"`
 	State        string   `json:"state"`
+	Song         string   `json:"song"`
 }
 
 // Player struct
@@ -39,11 +41,14 @@ type Player struct {
 
 // Room struct
 type Room struct {
-	ID      string
-	Host    *Player
-	Players map[string]*Player
-	Lock    sync.Mutex
-	State   string
+	ID          string
+	Host        *Player
+	Players     map[string]*Player
+	Lock        sync.Mutex
+	State       string
+	CurrentSong string
+	SetList     []string
+	RoundEnd    time.Time
 }
 
 // GameState holds all players(sessions) and rooms
@@ -58,6 +63,65 @@ var game = GameState{
 	Rooms:    make(map[string]*Room),
 }
 
+func setNextSong(room *Room) bool {
+	room.Lock.Lock()
+	defer room.Lock.Unlock()
+
+	lastIndex := len(room.SetList) - 1
+
+	if lastIndex < 0 {
+		return false
+	}
+
+	room.CurrentSong = room.SetList[lastIndex]
+	room.SetList = room.SetList[:lastIndex]
+	room.RoundEnd = time.Now().Add(5 * time.Second)
+	fmt.Printf("Set new song to: %s\n", room.CurrentSong)
+	return true
+}
+
+// Handles each running room by handling timers, setlist, rounds, scores.
+func handleGame(room *Room) {
+	// Set setlist for the room
+	room.Lock.Lock()
+	room.SetList = append(room.SetList, "a", "b")
+	room.Lock.Unlock()
+
+	setNextSong(room)
+
+	// Broadcast that the game is starting
+	broadcastRoomState(room)
+
+	// Main loop for each game
+	for {
+		time.Sleep(1 * time.Second)
+		room.Lock.Lock()
+		// If no players left, stop routine
+		if len(room.Players) <= 0 {
+			room.Lock.Unlock()
+			break
+		}
+
+		// If round ended
+		if time.Now().After(room.RoundEnd) {
+			fmt.Printf("Round ended!\n")
+			room.Lock.Unlock()
+			if setNextSong(room) == false {
+				break
+			}
+			broadcastRoomState(room)
+			room.Lock.Lock()
+		}
+
+		room.Lock.Unlock()
+	}
+	printAllRooms()
+	room.Lock.Lock()
+	room.State = "lobby"
+	room.Lock.Unlock()
+	broadcastRoomState(room)
+}
+
 func printAllPlayers() {
 	game.Lock.Lock()
 	defer game.Lock.Unlock()
@@ -66,6 +130,16 @@ func printAllPlayers() {
 		fmt.Println(key)
 	}
 	fmt.Println("END All players")
+}
+
+func printAllRooms() {
+	game.Lock.Lock()
+	defer game.Lock.Unlock()
+	fmt.Println("All rooms:")
+	for key := range game.Rooms {
+		fmt.Println(key)
+	}
+	fmt.Println("END All rooms")
 }
 
 func printAllPlayersInRoom(room *Room) {
@@ -134,10 +208,12 @@ func createRoom(host string, displayName string) *Room {
 	}
 
 	room := &Room{
-		ID:      roomCode,
-		Host:    hostUser,
-		Players: make(map[string]*Player),
-		State:   "lobby",
+		ID:          roomCode,
+		Host:        hostUser,
+		Players:     make(map[string]*Player),
+		State:       "lobby",
+		CurrentSong: "",
+		RoundEnd:    time.Now(),
 	}
 
 	game.Rooms[room.ID] = room
@@ -194,6 +270,7 @@ func broadcastRoomState(room *Room) {
 			RoomOwner: isRoomOwner(room, player),
 			Players:   names,
 			State:     room.State,
+			Song:      room.CurrentSong,
 		}
 		if player.Conn != nil {
 			player.Conn.WriteJSON(response)
@@ -300,7 +377,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			room.State = "playing"
 			room.Lock.Unlock()
 
-			broadcastRoomState(room)
+			go handleGame(room)
 
 		case "createRoom":
 			room := createRoom(clientMsg.SessionToken, clientMsg.DisplayName)
@@ -357,11 +434,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			room.Lock.Lock()
 			delete(room.Players, player.SessionToken)
 			if len(room.Players) <= 0 {
-				fmt.Printf("Room empty, removing")
-				room.Lock.Unlock()
+				fmt.Printf("Room empty, removing: %s\n", room.ID)
 				game.Lock.Lock()
 				delete(game.Rooms, room.ID)
 				game.Lock.Unlock()
+				room.Lock.Unlock()
 				continue
 			}
 			room.Lock.Unlock()

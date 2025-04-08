@@ -6,6 +6,7 @@ const lobbyDiv = document.getElementById("lobby");
 const homepageDiv = document.getElementById("homepage");
 const gameDiv = document.getElementById("game");
 const startButton = document.getElementById("startButton");
+const currentSong = document.getElementById("currentSong");
 let ws = null;
 let isOwner = false;
 let currentRoomCode = null;
@@ -92,6 +93,10 @@ function joinRoom() {
 
 // Update the player list UI
 function updatePlayerList() {
+  homepageDiv.style.display = "None";
+  lobbyDiv.style.display = "Block";
+  gameDiv.style.display = "None";
+
   playerList.innerHTML = "";
   for (const i in players) {
     const li = document.createElement("li");
@@ -193,6 +198,7 @@ function connect() {
       case "roomState":
         players = msg.players;
         isOwner = msg.roomOwner;
+        currentSong.innerHTML = "Current Song: " + msg.song;
         if (msg.state === "lobby") {
           updatePlayerList();
         } else if (msg.state === "playing") {
