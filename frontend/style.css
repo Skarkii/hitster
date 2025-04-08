@@ -75,3 +75,7 @@ button {
 .startButton {
     display: none;
 }
+
+.game {
+    display: none;
+}

@@ -42,9 +42,15 @@
             </div>
             <h2>Players</h2>
             <ul id="playerList"></ul>
-            <button id="startButton" onclick="">Start</button>
+            <button id="startButton" onclick="startGame()">Start</button>
         </div>
-        <div id="game"></div>
+
+        <div id="game" class="game">
+            <h2>GAME ON</h2>
+            <div>
+                <button onclick="leaveRoom()">Leave room</button>
+            </div>
+        </div>
         <div id="popup" class="popup"></div>
         <script defer src="scripts/game.js"></script>
     </body>

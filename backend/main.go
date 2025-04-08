@@ -26,6 +26,7 @@ type ServerMessage struct {
 	RoomCode     string   `json:"roomCode"`
 	RoomOwner    bool     `json:"roomOwner"`
 	Players      []string `json:"players"`
+	State        string   `json:"state"`
 }
 
 // Player struct
@@ -42,6 +43,7 @@ type Room struct {
 	Host    *Player
 	Players map[string]*Player
 	Lock    sync.Mutex
+	State   string
 }
 
 // GameState holds all players(sessions) and rooms
@@ -135,6 +137,7 @@ func createRoom(host string, displayName string) *Room {
 		ID:      roomCode,
 		Host:    hostUser,
 		Players: make(map[string]*Player),
+		State:   "lobby",
 	}
 
 	game.Rooms[room.ID] = room
@@ -190,6 +193,7 @@ func broadcastRoomState(room *Room) {
 			RoomCode:  room.ID,
 			RoomOwner: isRoomOwner(room, player),
 			Players:   names,
+			State:     room.State,
 		}
 		if player.Conn != nil {
 			player.Conn.WriteJSON(response)
@@ -271,6 +275,32 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				})
 				broadcastRoomState(room)
 			}
+
+		case "startGame":
+			player := getPlayer(clientMsg.SessionToken)
+			room := getRoom(player.RoomID, player.SessionToken, player.DisplayName)
+
+			if room == nil {
+				fmt.Printf("Player tried to start but not in room")
+				conn.WriteJSON(ServerMessage{
+					Type: "notInRoom",
+				})
+				continue
+			}
+
+			room.Lock.Lock()
+			if len(room.Players) <= 1 {
+				fmt.Printf("Player tried to start room without enough players!")
+				room.Lock.Unlock()
+				conn.WriteJSON(ServerMessage{
+					Type: "notEnoughPlayers",
+				})
+				continue
+			}
+			room.State = "playing"
+			room.Lock.Unlock()
+
+			broadcastRoomState(room)
 
 		case "createRoom":
 			room := createRoom(clientMsg.SessionToken, clientMsg.DisplayName)

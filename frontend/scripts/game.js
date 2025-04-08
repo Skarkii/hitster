@@ -4,6 +4,7 @@ const roomCodeInput = document.getElementById("roomCode");
 const displayNameInput = document.getElementById("displayName");
 const lobbyDiv = document.getElementById("lobby");
 const homepageDiv = document.getElementById("homepage");
+const gameDiv = document.getElementById("game");
 const startButton = document.getElementById("startButton");
 let ws = null;
 let isOwner = false;
@@ -104,17 +105,28 @@ function updatePlayerList() {
   }
 }
 
+function startGame() {
+  ws.send(
+    JSON.stringify({
+      type: "startGame",
+      sessionToken: sessionToken,
+    }),
+  );
+}
+
 function joinedRoom() {
   roomCodeDisplay.textContent = `Room Code: ${currentRoomCode}`;
   updatePlayerList();
 
   homepageDiv.style.display = "None";
   lobbyDiv.style.display = "Block";
+  gameDiv.style.display = "None";
 }
 
 function leaveRoom() {
   homepageDiv.style.display = "Block";
   lobbyDiv.style.display = "None";
+  gameDiv.style.display = "None";
   currentRoomCode = null;
   ws.send(
     JSON.stringify({
@@ -122,6 +134,12 @@ function leaveRoom() {
       sessionToken: sessionToken,
     }),
   );
+}
+
+function displayGame() {
+  gameDiv.style.display = "Block";
+  lobbyDiv.style.display = "none";
+  homepageDiv.style.display = "none";
 }
 
 function connect() {
@@ -153,6 +171,15 @@ function connect() {
         localStorage.setItem("sessionToken", sessionToken);
         console.log("Set SessionToken to: %s", sessionToken);
         break;
+      case "notEnoughPlayers":
+        showPopup("Not enough players!", popupTypes.INFO);
+        break;
+      case "notInRoom":
+        showPopup(
+          "Not in room, please refresh your browser!",
+          popupTypes.WARNING,
+        );
+        break;
       case "failedJoin":
         showPopup("Room code does not exist!");
         break;
@@ -166,7 +193,13 @@ function connect() {
       case "roomState":
         players = msg.players;
         isOwner = msg.roomOwner;
-        updatePlayerList();
+        if (msg.state === "lobby") {
+          updatePlayerList();
+        } else if (msg.state === "playing") {
+          displayGame();
+        } else {
+          console.log("UNPARSED GAME STATE: " + msg.state);
+        }
         break;
       default:
         console.log("UNHANDLED MSG:" + msg.type);
