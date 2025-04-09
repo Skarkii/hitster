@@ -29,6 +29,7 @@ type ServerMessage struct {
 	Players      []string `json:"players"`
 	State        string   `json:"state"`
 	Song         string   `json:"song"`
+	RoomEnd      string   `json:"roomEnd"`
 }
 
 // Player struct
@@ -70,6 +71,7 @@ func setNextSong(room *Room) bool {
 	lastIndex := len(room.SetList) - 1
 
 	if lastIndex < 0 {
+		room.CurrentSong = ""
 		return false
 	}
 
@@ -85,9 +87,8 @@ func handleGame(room *Room) {
 	// Set setlist for the room
 	room.Lock.Lock()
 	room.SetList = append(room.SetList, "a", "b")
+	room.State = "starting"
 	room.Lock.Unlock()
-
-	setNextSong(room)
 
 	// Broadcast that the game is starting
 	broadcastRoomState(room)
@@ -105,6 +106,8 @@ func handleGame(room *Room) {
 		// If round ended
 		if time.Now().After(room.RoundEnd) {
 			fmt.Printf("Round ended!\n")
+			time.Sleep(3 * time.Second)
+			room.State = "playing"
 			room.Lock.Unlock()
 			if setNextSong(room) == false {
 				break
@@ -117,9 +120,12 @@ func handleGame(room *Room) {
 	}
 	printAllRooms()
 	room.Lock.Lock()
-	room.State = "lobby"
+	room.State = "scoreboard"
 	room.Lock.Unlock()
 	broadcastRoomState(room)
+	room.Lock.Lock()
+	room.State = "lobby"
+	room.Lock.Unlock()
 }
 
 func printAllPlayers() {
@@ -243,6 +249,7 @@ func getRoom(code string, playerToken string, displayName string) *Room {
 
 		return existingRoom
 	}
+	fmt.Printf("Did not found room: %s\n", code)
 	return nil
 }
 
@@ -271,6 +278,7 @@ func broadcastRoomState(room *Room) {
 			Players:   names,
 			State:     room.State,
 			Song:      room.CurrentSong,
+			RoomEnd:   room.RoundEnd.Format(time.RFC3339),
 		}
 		if player.Conn != nil {
 			player.Conn.WriteJSON(response)

@@ -79,3 +79,7 @@ button {
 .game {
     display: none;
 }
+
+.scoreboard {
+    display: none;
+}

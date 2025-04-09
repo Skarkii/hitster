@@ -1,9 +1,11 @@
 let sessionToken = localStorage.getItem("sessionToken") || "";
+let userName = localStorage.getItem("lastName") || "";
 const roomCodeDisplay = document.getElementById("roomCodeDisplay");
 const roomCodeInput = document.getElementById("roomCode");
 const displayNameInput = document.getElementById("displayName");
 const lobbyDiv = document.getElementById("lobby");
 const homepageDiv = document.getElementById("homepage");
+const scoreboardDiv = document.getElementById("scoreboard");
 const gameDiv = document.getElementById("game");
 const startButton = document.getElementById("startButton");
 const currentSong = document.getElementById("currentSong");
@@ -11,6 +13,7 @@ let ws = null;
 let isOwner = false;
 let currentRoomCode = null;
 let players = {};
+let roomEnd = "";
 
 const popupTypes = Object.freeze({
   INFO: 0,
@@ -93,10 +96,6 @@ function joinRoom() {
 
 // Update the player list UI
 function updatePlayerList() {
-  homepageDiv.style.display = "None";
-  lobbyDiv.style.display = "Block";
-  gameDiv.style.display = "None";
-
   playerList.innerHTML = "";
   for (const i in players) {
     const li = document.createElement("li");
@@ -119,19 +118,34 @@ function startGame() {
   );
 }
 
-function joinedRoom() {
-  roomCodeDisplay.textContent = `Room Code: ${currentRoomCode}`;
-  updatePlayerList();
+function startCountdown(roundEnd) {
+  const countdownElement = document.getElementById("countdown");
+  countdownElement.style.display = "block";
+  let interval = null;
 
-  homepageDiv.style.display = "None";
-  lobbyDiv.style.display = "Block";
-  gameDiv.style.display = "None";
+  function updateCountdown() {
+    const now = new Date();
+    const timeLeftMs = roundEnd - now;
+
+    if (timeLeftMs <= 0) {
+      clearInterval(interval); // Uses 'interval' here
+      countdownElement.textContent = "Round ended!";
+      return;
+    }
+
+    const secondsLeft = Math.round(timeLeftMs / 1000);
+    countdownElement.textContent = `Time left: ${secondsLeft} seconds`;
+  }
+
+  updateCountdown(); // Runs immediately
+  interval = setInterval(updateCountdown, 1000); // Assigns 'interval' here
 }
 
 function leaveRoom() {
   homepageDiv.style.display = "Block";
   lobbyDiv.style.display = "None";
   gameDiv.style.display = "None";
+  scoreboardDiv.style.display = "none";
   currentRoomCode = null;
   ws.send(
     JSON.stringify({
@@ -141,10 +155,28 @@ function leaveRoom() {
   );
 }
 
+function joinedRoom() {
+  roomCodeDisplay.textContent = `Room Code: ${currentRoomCode}`;
+  updatePlayerList();
+
+  homepageDiv.style.display = "None";
+  lobbyDiv.style.display = "Block";
+  gameDiv.style.display = "None";
+  scoreboardDiv.style.display = "none";
+}
+
 function displayGame() {
-  gameDiv.style.display = "Block";
+  gameDiv.style.display = "block";
   lobbyDiv.style.display = "none";
   homepageDiv.style.display = "none";
+  scoreboardDiv.style.display = "none";
+}
+
+function displayScoreboard() {
+  gameDiv.style.display = "none";
+  lobbyDiv.style.display = "none";
+  homepageDiv.style.display = "none";
+  scoreboardDiv.style.display = "block";
 }
 
 function connect() {
@@ -198,11 +230,22 @@ function connect() {
       case "roomState":
         players = msg.players;
         isOwner = msg.roomOwner;
-        currentSong.innerHTML = "Current Song: " + msg.song;
+
         if (msg.state === "lobby") {
           updatePlayerList();
-        } else if (msg.state === "playing") {
+        } else if (msg.state === "playing" || msg.state === "starting") {
+          if (msg.state === "starting") {
+            currentSong.innerHTML = "Starting!!";
+            const countdownElement = document.getElementById("countdown");
+            countdownElement.style.display = "none";
+          } else {
+            currentSong.innerHTML = "Current Song: " + msg.song;
+            roomEnd = new Date(msg.roomEnd);
+            startCountdown(roomEnd);
+          }
           displayGame();
+        } else if (msg.state === "scoreboard") {
+          displayScoreboard();
         } else {
           console.log("UNPARSED GAME STATE: " + msg.state);
         }
