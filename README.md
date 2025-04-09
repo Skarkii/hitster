@@ -36,11 +36,11 @@ This section is to be improved upon a more ready state.
    ```bash
    git clone https://github.com/skarkii/hitster.git
    ```
- 2. **Start the backend:**
-  ```bash
-  cd backend
-  go run .
-  ```
+2. **Start the backend:**
+   ```bash
+   cd backend
+   go run .
+   ```
 3. **Open the index.html**
    
   Open your browser and navigate to the file frontend/index.html
